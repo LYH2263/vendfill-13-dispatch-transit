@@ -12,6 +12,7 @@ import { RouterLink, RouterView } from 'vue-router'
         <div class="vf-rail-title">机位列表</div>
         <RouterLink to="/locations" class="vf-site-btn">点位</RouterLink>
         <RouterLink to="/lanes" class="vf-site-btn">货道格子</RouterLink>
+        <RouterLink to="/dispatches" class="vf-site-btn">发车登记</RouterLink>
         <RouterLink to="/sales" class="vf-site-btn">销量</RouterLink>
         <RouterLink to="/refills" class="vf-site-btn">补货小票</RouterLink>
         <RouterLink to="/full" class="vf-site-btn">满仓</RouterLink>

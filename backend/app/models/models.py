@@ -33,3 +33,11 @@ class RefillOrder(Base):
     location_id: Mapped[int] = mapped_column(ForeignKey("locations.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     lines_json: Mapped[str] = mapped_column(Text, default="[]")
+
+class Dispatch(Base):
+    """发车登记：货物从仓库发出、进入在途；按货道记录每次发出件数。"""
+    __tablename__ = "dispatches"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    lane_id: Mapped[int] = mapped_column(ForeignKey("lanes.id"))
+    qty: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

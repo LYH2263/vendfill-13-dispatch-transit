@@ -1,43 +1,82 @@
 import json
-from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+
 from app.database import get_db
-from app.models.models import Lane, Location, RefillOrder
-from app.services.fill_engine import build_fill_lines, summarize
+from app.models.models import Location, RefillOrder
+from app.services.refill import live_snapshot, persist_order
+
 router = APIRouter(prefix="/refills", tags=["refills"])
+
 
 @router.post("/run")
 def run_refill(location_id: int = 1, db: Session = Depends(get_db)):
-    loc = db.get(Location, location_id)
-    if not loc: raise HTTPException(404, "点位不存在")
-    lanes = db.scalars(select(Lane).where(Lane.location_id == location_id).order_by(Lane.slot_no)).all()
-    payload = [{"id": l.id, "slot_no": l.slot_no, "sku_name": l.sku_name,
-                "capacity": l.capacity, "stock": l.stock, "in_transit": l.in_transit} for l in lanes]
-    summary = summarize(build_fill_lines(payload))
-    order = RefillOrder(location_id=location_id, created_at=datetime.utcnow(),
-                        lines_json=json.dumps(summary, ensure_ascii=False))
-    db.add(order); db.commit(); db.refresh(order)
-    return {"id": order.id, "location_id": location_id, **summary}
+    """显式生成一张新世代补货单：按当前在途现算并落库。
+
+    只影响此后的新单，既有的历史单行原样冻结，不被回改。
+    """
+    if not db.get(Location, location_id):
+        raise HTTPException(404, "点位不存在")
+    order, snapshot = persist_order(db, location_id)
+    return {"id": order.id, "location_id": location_id, **snapshot}
+
 
 @router.get("/latest")
 def latest(location_id: int = 1, db: Session = Depends(get_db)):
-    order = db.scalars(select(RefillOrder).where(RefillOrder.location_id == location_id)
-                       .order_by(RefillOrder.id.desc())).first()
+    """读取最近一张历史补货单（冻结快照）；不存在返回 404，绝不隐式建单。"""
+    order = db.scalars(
+        select(RefillOrder)
+        .where(RefillOrder.location_id == location_id)
+        .order_by(RefillOrder.id.desc())
+    ).first()
     if not order:
-        return run_refill(location_id=location_id, db=db)
-    data = json.loads(order.lines_json)
-    return {"id": order.id, "location_id": location_id, **data}
+        raise HTTPException(404, "尚无补货单")
+    return {"id": order.id, "location_id": location_id, **json.loads(order.lines_json)}
+
+
+@router.get("/orders")
+def list_orders(location_id: int = 1, db: Session = Depends(get_db)):
+    rows = db.scalars(
+        select(RefillOrder)
+        .where(RefillOrder.location_id == location_id)
+        .order_by(RefillOrder.id.desc())
+    ).all()
+    return [
+        {"id": o.id, "location_id": o.location_id, "created_at": o.created_at.isoformat()}
+        for o in rows
+    ]
+
+
+@router.get("/orders/{order_id}")
+def get_order(order_id: int, db: Session = Depends(get_db)):
+    order = db.get(RefillOrder, order_id)
+    if not order:
+        raise HTTPException(404, "补货单不存在")
+    return {"id": order.id, "location_id": order.location_id,
+            "created_at": order.created_at.isoformat(), **json.loads(order.lines_json)}
+
 
 @router.get("/full")
 def full_lanes(location_id: int = 1, db: Session = Depends(get_db)):
-    data = latest(location_id=location_id, db=db)
-    return {"location_id": location_id, "lanes": [l for l in data["lines"] if l["status"] == "full"]}
+    """满仓名单：按货道当前在途现算，不读历史单快照。
+
+    车道进入超占（缺口 < 0）即从名单移除，离开超占回到缺口 0 即重新进入。
+    """
+    if not db.get(Location, location_id):
+        raise HTTPException(404, "点位不存在")
+    data = live_snapshot(db, location_id)
+    return {"location_id": location_id,
+            "lanes": [l for l in data["lines"] if l["status"] == "full"]}
+
 
 @router.get("/summary")
 def refill_summary(location_id: int = 1, db: Session = Depends(get_db)):
-    data = latest(location_id=location_id, db=db)
+    """活口汇总：待补/满仓/超占计数与补量全部按当前在途现算。"""
+    if not db.get(Location, location_id):
+        raise HTTPException(404, "点位不存在")
+    data = live_snapshot(db, location_id)
     return {
         "location_id": location_id,
         "total_fill": data["total_fill"],
