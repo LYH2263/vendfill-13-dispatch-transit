@@ -27,6 +27,14 @@ class Sale(Base):
     qty: Mapped[int] = mapped_column(Integer)
     sold_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
+class Dispatch(Base):
+    """一次发车登记：按货道记录本次发出件数；写入即累加到 lane.in_transit。"""
+    __tablename__ = "dispatches"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    lane_id: Mapped[int] = mapped_column(ForeignKey("lanes.id"))
+    qty: Mapped[int] = mapped_column(Integer)
+    dispatched_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
 class RefillOrder(Base):
     __tablename__ = "refill_orders"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

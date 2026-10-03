@@ -1,7 +1,11 @@
 from datetime import datetime, timedelta
+
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+
 from app.models.models import Lane, Location, Sale
+from app.services.dispatch_service import dispatch_lane
+from app.services.refill_service import create_refill_order
 
 def seed_if_empty(db: Session) -> None:
     if (db.scalar(select(func.count()).select_from(Location)) or 0) > 0:
@@ -25,3 +29,10 @@ def seed_if_empty(db: Session) -> None:
     for i, lid in enumerate(lane_ids):
         db.add(Sale(lane_id=lid, qty=2 + i, sold_at=now - timedelta(hours=i)))
     db.commit()
+
+    # 旧世代补货单：此时 B1 在途=2，缺口=7，补量=7（need_fill）。落库后冻结。
+    old_order, _ = create_refill_order(db, loc.id)
+
+    # B1 再发车 3 件：B1 在途 2 → 5；旧单行不改，此后新生成的单才按新在途算（缺口 12-3-5=4）。
+    b1 = db.scalars(select(Lane).where(Lane.location_id == loc.id, Lane.slot_no == "B1")).one()
+    dispatch_lane(db, b1.id, 3)
